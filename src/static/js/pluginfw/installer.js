@@ -1,7 +1,12 @@
 var plugins = require("ep_etherpad-lite/static/js/pluginfw/plugins");
 var hooks = require("ep_etherpad-lite/static/js/pluginfw/hooks");
 var npm = require("npm");
-var registry = require("npm/lib/utils/npm-registry-client/index.js");
+var RegClient = require("npm-registry-client")
+
+var registry = new RegClient(
+{ registry: "http://registry.npmjs.org"
+, cache: npm.cache }
+);
 
 var withNpm = function (npmfn, final, cb) {
   npm.load({}, function (er) {
@@ -10,7 +15,10 @@ var withNpm = function (npmfn, final, cb) {
       cb({progress: 0.5, message:message.msg + ": " + message.pref});
     });
     npmfn(function (er, data) {
-      if (er) return cb({progress:1, error:er.code + ": " + er.path});
+      if (er) {
+        console.error(er);
+        return cb({progress:1, error: er.message});
+      }
       if (!data) data = {};
       data.progress = 1;
       data.message = "Done.";
@@ -72,7 +80,7 @@ exports.search = function(query, cache, cb) {
           cb(null, exports.searchCache);
         } else {
           registry.get(
-            "/-/all", null, 600, false, true,
+            "/-/all", 600, false, true,
             function (er, data) {
               if (er) return cb(er);
               exports.searchCache = data;
@@ -86,9 +94,13 @@ exports.search = function(query, cache, cb) {
           if (er) return cb(er);
           var res = {};
           var i = 0;
-          for (key in data) {
+          var pattern = query.pattern.toLowerCase();
+          for (key in data) { // for every plugin in the data from npm
             if (   key.indexOf(plugins.prefix) == 0
-                && key.indexOf(query.pattern) != -1) {
+                && key.indexOf(pattern) != -1
+                || key.indexOf(plugins.prefix) == 0
+                && data[key].description.indexOf(pattern) != -1
+              ) { // If the name contains ep_ and the search string is in the name or description
               i++;
               if (i > query.offset
                   && i <= query.offset + query.limit) {

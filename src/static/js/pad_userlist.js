@@ -21,6 +21,7 @@
  */
 
 var padutils = require('./pad_utils').padutils;
+var hooks = require('./pluginfw/hooks');
 
 var myUserInfo = {};
 
@@ -106,26 +107,21 @@ var paduserlist = (function()
     function getUserRowHtml(height, data)
     {
       var nameHtml;
-      var isGuest = (data.id.charAt(0) != 'p');
       if (data.name)
       {
         nameHtml = padutils.escapeHtml(data.name);
-        if (isGuest && pad.getIsProPad())
-        {
-          nameHtml += ' (Guest)';
-        }
       }
       else
       {
-        nameHtml = '<input type="text" class="editempty newinput" value="unnamed" ' + (isNameEditable(data) ? '' : 'disabled="disabled" ') + '/>';
+        nameHtml = '<input data-l10n-id="pad.userlist.unnamed" type="text" class="editempty newinput" value="'+_('pad.userlist.unnamed')+'" ' + (isNameEditable(data) ? '' : 'disabled="disabled" ') + '/>';
       }
 
-      return ['<td style="height:', height, 'px" class="usertdswatch"><div class="swatch" style="background:' + data.color + '">&nbsp;</div></td>', '<td style="height:', height, 'px" class="usertdname">', nameHtml, '</td>', '<td style="height:', height, 'px" class="activity">', padutils.escapeHtml(data.activity), '</td>'].join('');
+      return ['<td style="height:', height, 'px" class="usertdswatch"><div class="swatch" style="background:' + padutils.escapeHtml(data.color) + '">&nbsp;</div></td>', '<td style="height:', height, 'px" class="usertdname">', nameHtml, '</td>', '<td style="height:', height, 'px" class="activity">', padutils.escapeHtml(data.activity), '</td>'].join('');
     }
 
-    function getRowHtml(id, innerHtml)
+    function getRowHtml(id, innerHtml, authorId)
     {
-      return '<tr id="' + id + '">' + innerHtml + '</tr>';
+      return '<tr data-authorId="'+authorId+'" id="' + id + '">' + innerHtml + '</tr>';
     }
 
     function rowNode(row)
@@ -195,18 +191,20 @@ var paduserlist = (function()
         domId: domId,
         animationPower: animationPower
       };
+      var authorId = data.id;
+
       handleRowData(row);
       rowsPresent.splice(position, 0, row);
       var tr;
       if (animationPower == 0)
       {
-        tr = $(getRowHtml(domId, getUserRowHtml(getAnimationHeight(0), data)));
+        tr = $(getRowHtml(domId, getUserRowHtml(getAnimationHeight(0), data), authorId));
         row.animationStep = 0;
       }
       else
       {
         rowsFadingIn.push(row);
-        tr = $(getRowHtml(domId, getEmptyRowHtml(getAnimationHeight(ANIMATION_START))));
+        tr = $(getRowHtml(domId, getEmptyRowHtml(getAnimationHeight(ANIMATION_START)), authorId));
       }
       handleRowNode(tr, data);
       if (position == 0)
@@ -373,7 +371,7 @@ var paduserlist = (function()
       if (!newName)
       {
         jnode.addClass("editempty");
-        jnode.val("unnamed");
+        jnode.val(_('pad.userlist.unnamed'));
       }
       else
       {
@@ -529,6 +527,10 @@ var paduserlist = (function()
         return;
       }
 
+      hooks.callAll('userJoinOrUpdate', {
+        userInfo: info
+      });
+
       var userData = {};
       userData.color = typeof info.colorId == "number" ? clientVars.colorPalette[info.colorId] : info.colorId;
       userData.name = info.name;
@@ -657,13 +659,13 @@ var paduserlist = (function()
       if (box.length == 0)
       {
         // make guest prompt box
-        box = $('<div id="'+padutils.escapeHtml('guestprompt-' + encodedUserId) + '" class="guestprompt"><div class="choices"><a href="' + padutils.escapeHtml('javascript:void(require('+JSON.stringify(module.id)+').paduserlist.answerGuestPrompt(' + JSON.stringify(encodedUserId) + ',false))')+'">Deny</a> <a href="' + padutils.escapeHtml('javascript:void(require('+JSON.stringify(module.id)+').paduserlist.answerGuestPrompt(' + JSON.stringify(encodedUserId) + ',true))') + '">Approve</a></div><div class="guestname"><strong>Guest:</strong> ' + padutils.escapeHtml(displayName) + '</div></div>');
+        box = $('<div id="'+padutils.escapeHtml('guestprompt-' + encodedUserId) + '" class="guestprompt"><div class="choices"><a href="' + padutils.escapeHtml('javascript:void(require('+JSON.stringify(module.id)+').paduserlist.answerGuestPrompt(' + JSON.stringify(encodedUserId) + ',false))')+'">'+_('pad.userlist.deny')+'</a> <a href="' + padutils.escapeHtml('javascript:void(require('+JSON.stringify(module.id)+').paduserlist.answerGuestPrompt(' + JSON.stringify(encodedUserId) + ',true))') + '">'+_('pad.userlist.approve')+'</a></div><div class="guestname"><strong>'+_('pad.userlist.guest')+':</strong> ' + padutils.escapeHtml(displayName) + '</div></div>');
         $("#guestprompts").append(box);
       }
       else
       {
         // update display name
-        box.find(".guestname").html('<strong>Guest:</strong> ' + padutils.escapeHtml(displayName));
+        box.find(".guestname").html('<strong>'+_('pad.userlist.guest')+':</strong> ' + padutils.escapeHtml(displayName));
       }
       var hideLater = padutils.getCancellableAction(actionName, function()
       {
@@ -705,12 +707,11 @@ var paduserlist = (function()
     {
       if (myUserInfo.name)
       {
-        $("#myusernameedit").removeClass("editempty").val(
-        myUserInfo.name);
+        $("#myusernameedit").removeClass("editempty").val(myUserInfo.name);
       }
       else
       {
-        $("#myusernameedit").addClass("editempty").val("Enter your name");
+        $("#myusernameedit").addClass("editempty").val(_("pad.userlist.entername"));
       }
       if (colorPickerOpen)
       {

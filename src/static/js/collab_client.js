@@ -21,6 +21,7 @@
  */
 
 var chat = require('./chat').chat;
+var hooks = require('./pluginfw/hooks');
 
 // Dependency fill on init. This exists for `pad.socket` only.
 // TODO: bind directly to the socket.
@@ -61,6 +62,7 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
   var caughtErrorCatchers = [];
   var caughtErrorTimes = [];
   var debugMessages = [];
+  var msgQueue = [];
 
   tellAceAboutHistoricalAuthors(serverVars.historicalAuthorData);
   tellAceActiveAuthorInfo(initialUserInfo);
@@ -109,6 +111,7 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
 
   function handleUserChanges()
   {
+    if (editor.getInInternationalComposition()) return;
     if ((!getSocket()) || channelState == "CONNECTING")
     {
       if (channelState == "CONNECTING" && (((+new Date()) - initialStartConnectTime) > 20000))
@@ -127,12 +130,12 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
 
     if (state != "IDLE")
     {
-      if (state == "COMMITTING" && (t - lastCommitTime) > 20000)
+      if (state == "COMMITTING" && msgQueue.length == 0 && (t - lastCommitTime) > 20000)
       {
         // a commit is taking too long
         setChannelState("DISCONNECTED", "slowcommit");
       }
-      else if (state == "COMMITTING" && (t - lastCommitTime) > 5000)
+      else if (state == "COMMITTING" && msgQueue.length == 0 && (t - lastCommitTime) > 5000)
       {
         callbacks.onConnectionTrouble("SLOW");
       }
@@ -149,6 +152,36 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
     {
       setTimeout(wrapRecordingErrors("setTimeout(handleUserChanges)", handleUserChanges), earliestCommit - t);
       return;
+    }
+
+    // apply msgQueue changeset.
+    if (msgQueue.length != 0) {
+      while (msg = msgQueue.shift()) {
+        var newRev = msg.newRev;
+        rev=newRev;
+        if (msg.type == "ACCEPT_COMMIT")
+        {
+          editor.applyPreparedChangesetToBase();
+          setStateIdle();
+          callCatchingErrors("onInternalAction", function()
+          {
+            callbacks.onInternalAction("commitAcceptedByServer");
+          });
+          callCatchingErrors("onConnectionTrouble", function()
+          {
+            callbacks.onConnectionTrouble("OK");
+          });
+          handleUserChanges();
+        }
+        else if (msg.type == "NEW_CHANGES")
+        {
+          var changeset = msg.changeset;
+          var author = (msg.author || '');
+          var apool = msg.apool;
+
+          editor.applyChangesToBase(changeset, author, apool);
+        }
+      }
     }
 
     var sentMessage = false;
@@ -253,10 +286,26 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
       var changeset = msg.changeset;
       var author = (msg.author || '');
       var apool = msg.apool;
+
+      // When inInternationalComposition, msg pushed msgQueue.
+      if (msgQueue.length > 0 || editor.getInInternationalComposition()) {
+        if (msgQueue.length > 0) oldRev = msgQueue[msgQueue.length - 1].newRev;
+        else oldRev = rev;
+
+        if (newRev != (oldRev + 1))
+        {
+          top.console.warn("bad message revision on NEW_CHANGES: " + newRev + " not " + (oldRev + 1));
+          // setChannelState("DISCONNECTED", "badmessage_newchanges");
+          return;
+        }
+        msgQueue.push(msg);
+        return;
+      }
+
       if (newRev != (rev + 1))
       {
-        dmesg("bad message revision on NEW_CHANGES: " + newRev + " not " + (rev + 1));
-        setChannelState("DISCONNECTED", "badmessage_newchanges");
+        top.console.warn("bad message revision on NEW_CHANGES: " + newRev + " not " + (rev + 1));
+        // setChannelState("DISCONNECTED", "badmessage_newchanges");
         return;
       }
       rev = newRev;
@@ -265,10 +314,22 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
     else if (msg.type == "ACCEPT_COMMIT")
     {
       var newRev = msg.newRev;
+      if (msgQueue.length > 0)
+      {
+        if (newRev != (msgQueue[msgQueue.length - 1].newRev + 1))
+        {
+          top.console.warn("bad message revision on ACCEPT_COMMIT: " + newRev + " not " + (msgQueue[msgQueue.length - 1][0] + 1));
+          // setChannelState("DISCONNECTED", "badmessage_acceptcommit");
+          return;
+        }
+        msgQueue.push(msg);
+        return;
+      }
+
       if (newRev != (rev + 1))
       {
-        dmesg("bad message revision on ACCEPT_COMMIT: " + newRev + " not " + (rev + 1));
-        setChannelState("DISCONNECTED", "badmessage_acceptcommit");
+        top.console.warn("bad message revision on ACCEPT_COMMIT: " + newRev + " not " + (rev + 1));
+        // setChannelState("DISCONNECTED", "badmessage_acceptcommit");
         return;
       }
       rev = newRev;
@@ -297,6 +358,14 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
     {
       var userInfo = msg.userInfo;
       var id = userInfo.userId;
+
+      // Avoid a race condition when setting colors.  If our color was set by a
+      // query param, ignore our own "new user" message's color value.
+      if (id === initialUserInfo.userId && initialUserInfo.globalUserColor)
+      {
+        msg.userInfo.colorId = initialUserInfo.globalUserColor;
+      }
+
       
       if (userSet[id])
       {
@@ -331,12 +400,35 @@ function getCollabClient(ace2editor, serverVars, initialUserInfo, options, _pad)
     }
     else if (msg.type == "CHAT_MESSAGE")
     {
-      chat.addMessage(msg, true);
+      chat.addMessage(msg, true, false);
+    }
+    else if (msg.type == "CHAT_MESSAGES")
+    {
+      for(var i = msg.messages.length - 1; i >= 0; i--)
+      {
+        chat.addMessage(msg.messages[i], true, true);
+      }
+      if(!chat.gotInitalMessages)
+      {
+        chat.scrollDown();
+        chat.gotInitalMessages = true;
+        chat.historyPointer = clientVars.chatHead - msg.messages.length;
+      }
+
+      // messages are loaded, so hide the loading-ball
+      $("#chatloadmessagesball").css("display", "none");
+
+      // there are less than 100 messages or we reached the top
+      if(chat.historyPointer <= 0) 
+        $("#chatloadmessagesbutton").css("display", "none");
+      else // there are still more messages, re-show the load-button
+        $("#chatloadmessagesbutton").css("display", "block");
     }
     else if (msg.type == "SERVER_MESSAGE")
     {
       callbacks.onServerMessage(msg.payload);
     }
+    hooks.callAll('handleClientMessage_' + msg.type, {payload: msg.payload});
   }
 
   function updateUserInfo(userInfo)

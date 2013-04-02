@@ -27,8 +27,6 @@
 
 var AttributePool = require("./AttributePool");
 
-var _opt = null;
-
 /**
  * ==================== General Util Functions =======================
  */
@@ -127,22 +125,13 @@ exports.opIterator = function (opsStr, optStartIndex) {
   function nextRegexMatch() {
     prevIndex = curIndex;
     var result;
-    if (_opt) {
-      result = _opt.nextOpInString(opsStr, curIndex);
-      if (result) {
-        if (result.opcode() == '?') {
-          exports.error("Hit error opcode in op stream");
-        }
-        curIndex = result.lastIndex();
-      }
-    } else {
-      regex.lastIndex = curIndex;
-      result = regex.exec(opsStr);
-      curIndex = regex.lastIndex;
-      if (result[0] == '?') {
-        exports.error("Hit error opcode in op stream");
-      }
+    regex.lastIndex = curIndex;
+    result = regex.exec(opsStr);
+    curIndex = regex.lastIndex;
+    if (result[0] == '?') {
+      exports.error("Hit error opcode in op stream");
     }
+  
     return result;
   }
   var regexResult = nextRegexMatch();
@@ -150,13 +139,7 @@ exports.opIterator = function (opsStr, optStartIndex) {
 
   function next(optObj) {
     var op = (optObj || obj);
-    if (_opt && regexResult) {
-      op.attribs = regexResult.attribs();
-      op.lines = regexResult.lines();
-      op.chars = regexResult.chars();
-      op.opcode = regexResult.opcode();
-      regexResult = nextRegexMatch();
-    } else if ((!_opt) && regexResult[0]) {
+    if (regexResult[0]) {
       op.attribs = regexResult[1];
       op.lines = exports.parseNum(regexResult[2] || 0);
       op.opcode = regexResult[3];
@@ -169,7 +152,7 @@ exports.opIterator = function (opsStr, optStartIndex) {
   }
 
   function hasNext() {
-    return !!(_opt ? regexResult : regexResult[0]);
+    return !!(regexResult[0]);
   }
 
   function lastIndex() {
@@ -414,159 +397,109 @@ exports.smartOpAssembler = function () {
   };
 };
 
-if (_opt) {
-  exports.mergingOpAssembler = function () {
-    var assem = _opt.mergingOpAssembler();
 
-    function append(op) {
-      assem.append(op.opcode, op.chars, op.lines, op.attribs);
-    }
+exports.mergingOpAssembler = function () {
+  // This assembler can be used in production; it efficiently
+  // merges consecutive operations that are mergeable, ignores
+  // no-ops, and drops final pure "keeps".  It does not re-order
+  // operations.
+  var assem = exports.opAssembler();
+  var bufOp = exports.newOp();
 
-    function toString() {
-      return assem.toString();
-    }
+  // If we get, for example, insertions [xxx\n,yyy], those don't merge,
+  // but if we get [xxx\n,yyy,zzz\n], that merges to [xxx\nyyyzzz\n].
+  // This variable stores the length of yyy and any other newline-less
+  // ops immediately after it.
+  var bufOpAdditionalCharsAfterNewline = 0;
 
-    function clear() {
-      assem.clear();
-    }
-
-    function endDocument() {
-      assem.endDocument();
-    }
-
-    return {
-      append: append,
-      toString: toString,
-      clear: clear,
-      endDocument: endDocument
-    };
-  };
-} else {
-  exports.mergingOpAssembler = function () {
-    // This assembler can be used in production; it efficiently
-    // merges consecutive operations that are mergeable, ignores
-    // no-ops, and drops final pure "keeps".  It does not re-order
-    // operations.
-    var assem = exports.opAssembler();
-    var bufOp = exports.newOp();
-
-    // If we get, for example, insertions [xxx\n,yyy], those don't merge,
-    // but if we get [xxx\n,yyy,zzz\n], that merges to [xxx\nyyyzzz\n].
-    // This variable stores the length of yyy and any other newline-less
-    // ops immediately after it.
-    var bufOpAdditionalCharsAfterNewline = 0;
-
-    function flush(isEndDocument) {
-      if (bufOp.opcode) {
-        if (isEndDocument && bufOp.opcode == '=' && !bufOp.attribs) {
-          // final merged keep, leave it implicit
-        } else {
+  function flush(isEndDocument) {
+    if (bufOp.opcode) {
+      if (isEndDocument && bufOp.opcode == '=' && !bufOp.attribs) {
+        // final merged keep, leave it implicit
+      } else {
+        assem.append(bufOp);
+        if (bufOpAdditionalCharsAfterNewline) {
+          bufOp.chars = bufOpAdditionalCharsAfterNewline;
+          bufOp.lines = 0;
           assem.append(bufOp);
-          if (bufOpAdditionalCharsAfterNewline) {
-            bufOp.chars = bufOpAdditionalCharsAfterNewline;
-            bufOp.lines = 0;
-            assem.append(bufOp);
-            bufOpAdditionalCharsAfterNewline = 0;
-          }
+          bufOpAdditionalCharsAfterNewline = 0;
         }
-        bufOp.opcode = '';
       }
+      bufOp.opcode = '';
     }
+  }
 
-    function append(op) {
-      if (op.chars > 0) {
-        if (bufOp.opcode == op.opcode && bufOp.attribs == op.attribs) {
-          if (op.lines > 0) {
-            // bufOp and additional chars are all mergeable into a multi-line op
-            bufOp.chars += bufOpAdditionalCharsAfterNewline + op.chars;
-            bufOp.lines += op.lines;
-            bufOpAdditionalCharsAfterNewline = 0;
-          } else if (bufOp.lines == 0) {
-            // both bufOp and op are in-line
-            bufOp.chars += op.chars;
-          } else {
-            // append in-line text to multi-line bufOp
-            bufOpAdditionalCharsAfterNewline += op.chars;
-          }
+  function append(op) {
+    if (op.chars > 0) {
+      if (bufOp.opcode == op.opcode && bufOp.attribs == op.attribs) {
+        if (op.lines > 0) {
+          // bufOp and additional chars are all mergeable into a multi-line op
+          bufOp.chars += bufOpAdditionalCharsAfterNewline + op.chars;
+          bufOp.lines += op.lines;
+          bufOpAdditionalCharsAfterNewline = 0;
+        } else if (bufOp.lines == 0) {
+          // both bufOp and op are in-line
+          bufOp.chars += op.chars;
         } else {
-          flush();
-          exports.copyOp(op, bufOp);
+          // append in-line text to multi-line bufOp
+          bufOpAdditionalCharsAfterNewline += op.chars;
         }
+      } else {
+        flush();
+        exports.copyOp(op, bufOp);
       }
     }
+  }
 
-    function endDocument() {
-      flush(true);
-    }
+  function endDocument() {
+    flush(true);
+  }
 
-    function toString() {
-      flush();
-      return assem.toString();
-    }
+  function toString() {
+    flush();
+    return assem.toString();
+  }
 
-    function clear() {
-      assem.clear();
-      exports.clearOp(bufOp);
-    }
-    return {
-      append: append,
-      toString: toString,
-      clear: clear,
-      endDocument: endDocument
-    };
+  function clear() {
+    assem.clear();
+    exports.clearOp(bufOp);
+  }
+  return {
+    append: append,
+    toString: toString,
+    clear: clear,
+    endDocument: endDocument
   };
-}
+};
 
-if (_opt) {
-  exports.opAssembler = function () {
-    var assem = _opt.opAssembler();
-    // this function allows op to be mutated later (doesn't keep a ref)
 
-    function append(op) {
-      assem.append(op.opcode, op.chars, op.lines, op.attribs);
+
+exports.opAssembler = function () {
+  var pieces = [];
+  // this function allows op to be mutated later (doesn't keep a ref)
+
+  function append(op) {
+    pieces.push(op.attribs);
+    if (op.lines) {
+      pieces.push('|', exports.numToString(op.lines));
     }
+    pieces.push(op.opcode);
+    pieces.push(exports.numToString(op.chars));
+  }
 
-    function toString() {
-      return assem.toString();
-    }
+  function toString() {
+    return pieces.join('');
+  }
 
-    function clear() {
-      assem.clear();
-    }
-    return {
-      append: append,
-      toString: toString,
-      clear: clear
-    };
+  function clear() {
+    pieces.length = 0;
+  }
+  return {
+    append: append,
+    toString: toString,
+    clear: clear
   };
-} else {
-  exports.opAssembler = function () {
-    var pieces = [];
-    // this function allows op to be mutated later (doesn't keep a ref)
-
-    function append(op) {
-      pieces.push(op.attribs);
-      if (op.lines) {
-        pieces.push('|', exports.numToString(op.lines));
-      }
-      pieces.push(op.opcode);
-      pieces.push(exports.numToString(op.chars));
-    }
-
-    function toString() {
-      return pieces.join('');
-    }
-
-    function clear() {
-      pieces.length = 0;
-    }
-    return {
-      append: append,
-      toString: toString,
-      clear: clear
-    };
-  };
-}
+};
 
 /**
  * A custom made String Iterator
@@ -2248,4 +2181,122 @@ exports.followAttributes = function (att1, att2, pool) {
     buf.append(exports.numToString(pool.putAttrib(atts[i])));
   }
   return buf.toString();
+};
+
+exports.composeWithDeletions = function (cs1, cs2, pool) {
+  var unpacked1 = exports.unpack(cs1);
+  var unpacked2 = exports.unpack(cs2);
+  var len1 = unpacked1.oldLen;
+  var len2 = unpacked1.newLen;
+  exports.assert(len2 == unpacked2.oldLen, "mismatched composition");
+  var len3 = unpacked2.newLen;
+  var bankIter1 = exports.stringIterator(unpacked1.charBank);
+  var bankIter2 = exports.stringIterator(unpacked2.charBank);
+  var bankAssem = exports.stringAssembler();
+
+  var newOps = exports.applyZip(unpacked1.ops, 0, unpacked2.ops, 0, function (op1, op2, opOut) {
+    var op1code = op1.opcode;
+    var op2code = op2.opcode;
+    if (op1code == '+' && op2code == '-') {
+      bankIter1.skip(Math.min(op1.chars, op2.chars));
+    }
+    exports._slicerZipperFuncWithDeletions(op1, op2, opOut, pool);
+    if (opOut.opcode == '+') {
+      if (op2code == '+') {
+        bankAssem.append(bankIter2.take(opOut.chars));
+      } else {
+        bankAssem.append(bankIter1.take(opOut.chars));
+      }
+    }
+  });
+
+  return exports.pack(len1, len3, newOps, bankAssem.toString());
+};
+
+// This function is 95% like _slicerZipperFunc, we just changed two lines to ensure it merges the attribs of deletions properly. 
+// This is necassary for correct paddiff. But to ensure these changes doesn't affect anything else, we've created a seperate function only used for paddiffs
+exports._slicerZipperFuncWithDeletions= function (attOp, csOp, opOut, pool) {
+  // attOp is the op from the sequence that is being operated on, either an
+  // attribution string or the earlier of two exportss being composed.
+  // pool can be null if definitely not needed.
+  //print(csOp.toSource()+" "+attOp.toSource()+" "+opOut.toSource());
+  if (attOp.opcode == '-') {
+    exports.copyOp(attOp, opOut);
+    attOp.opcode = '';
+  } else if (!attOp.opcode) {
+    exports.copyOp(csOp, opOut);
+    csOp.opcode = '';
+  } else {
+    switch (csOp.opcode) {
+    case '-':
+      {
+        if (csOp.chars <= attOp.chars) {
+          // delete or delete part
+          if (attOp.opcode == '=') {
+            opOut.opcode = '-';
+            opOut.chars = csOp.chars;
+            opOut.lines = csOp.lines;
+            opOut.attribs = csOp.attribs; //changed by yammer
+          }
+          attOp.chars -= csOp.chars;
+          attOp.lines -= csOp.lines;
+          csOp.opcode = '';
+          if (!attOp.chars) {
+            attOp.opcode = '';
+          }
+        } else {
+          // delete and keep going
+          if (attOp.opcode == '=') {
+            opOut.opcode = '-';
+            opOut.chars = attOp.chars;
+            opOut.lines = attOp.lines;
+            opOut.attribs = csOp.attribs; //changed by yammer
+          }
+          csOp.chars -= attOp.chars;
+          csOp.lines -= attOp.lines;
+          attOp.opcode = '';
+        }
+        break;
+      }
+    case '+':
+      {
+        // insert
+        exports.copyOp(csOp, opOut);
+        csOp.opcode = '';
+        break;
+      }
+    case '=':
+      {
+        if (csOp.chars <= attOp.chars) {
+          // keep or keep part
+          opOut.opcode = attOp.opcode;
+          opOut.chars = csOp.chars;
+          opOut.lines = csOp.lines;
+          opOut.attribs = exports.composeAttributes(attOp.attribs, csOp.attribs, attOp.opcode == '=', pool);
+          csOp.opcode = '';
+          attOp.chars -= csOp.chars;
+          attOp.lines -= csOp.lines;
+          if (!attOp.chars) {
+            attOp.opcode = '';
+          }
+        } else {
+          // keep and keep going
+          opOut.opcode = attOp.opcode;
+          opOut.chars = attOp.chars;
+          opOut.lines = attOp.lines;
+          opOut.attribs = exports.composeAttributes(attOp.attribs, csOp.attribs, attOp.opcode == '=', pool);
+          attOp.opcode = '';
+          csOp.chars -= attOp.chars;
+          csOp.lines -= attOp.lines;
+        }
+        break;
+      }
+    case '':
+      {
+        exports.copyOp(attOp, opOut);
+        attOp.opcode = '';
+        break;
+      }
+    }
+  }
 };

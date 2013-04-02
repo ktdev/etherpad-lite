@@ -29,8 +29,9 @@ var createCookie = require('./pad_utils').createCookie;
 var readCookie = require('./pad_utils').readCookie;
 var randomString = require('./pad_utils').randomString;
 var _ = require('./underscore');
+var hooks = require('./pluginfw/hooks');
 
-var socket, token, padId, export_links;
+var token, padId, export_links;
 
 function init() {
   $(document).ready(function ()
@@ -106,6 +107,9 @@ function init() {
       window.location.reload();
     });
 
+    exports.socket = socket; // make the socket available
+
+    hooks.aCallAll("postTimesliderInit");
   });
 }
 
@@ -144,13 +148,12 @@ function handleClientVars(message)
   require('./pad_impexp').padimpexp.init();
 
   //change export urls when the slider moves
-  var export_rev_regex = /(\/\d+)?\/export/
   BroadcastSlider.onSlider(function(revno)
   {
     // export_links is a jQuery Array, so .each is allowed.
     export_links.each(function()
     {
-      this.setAttribute('href', this.href.replace(export_rev_regex, '/' + revno + '/export'));
+      this.setAttribute('href', this.href.replace( /(.+?)\/\w+\/(\d+\/)?export/ , '$1/' + padId + '/' + revno + '/export'));
     });
   });
 
@@ -159,6 +162,7 @@ function handleClientVars(message)
   {
     fireWhenAllScriptsAreLoaded[i]();
   }
+  $("#ui-slider-handle").css('left', $("#ui-slider-bar").width() - 2);
 }
 
 exports.baseURL = '';

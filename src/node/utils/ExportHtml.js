@@ -1,12 +1,12 @@
 /**
  * Copyright 2009 Google Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS-IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,32 +20,10 @@ var Changeset = require("ep_etherpad-lite/static/js/Changeset");
 var padManager = require("../db/PadManager");
 var ERR = require("async-stacktrace");
 var Security = require('ep_etherpad-lite/static/js/security');
-
-function getPadPlainText(pad, revNum)
-{
-  var atext = ((revNum !== undefined) ? pad.getInternalRevisionAText(revNum) : pad.atext());
-  var textLines = atext.text.slice(0, -1).split('\n');
-  var attribLines = Changeset.splitAttributionLines(atext.attribs, atext.text);
-  var apool = pad.pool();
-
-  var pieces = [];
-  for (var i = 0; i < textLines.length; i++)
-  {
-    var line = _analyzeLine(textLines[i], attribLines[i], apool);
-    if (line.listLevel)
-    {
-      var numSpaces = line.listLevel * 2 - 1;
-      var bullet = '*';
-      pieces.push(new Array(numSpaces + 1).join(' '), bullet, ' ', line.text, '\n');
-    }
-    else
-    {
-      pieces.push(line.text, '\n');
-    }
-  }
-
-  return pieces.join('');
-}
+var hooks = require('ep_etherpad-lite/static/js/pluginfw/hooks');
+var getPadPlainText = require('./ExportHelper').getPadPlainText
+var _analyzeLine = require('./ExportHelper')._analyzeLine;
+var _encodeWhitespace = require('./ExportHelper')._encodeWhitespace;
 
 function getPadHTML(pad, revNum, callback)
 {
@@ -91,8 +69,9 @@ function getPadHTML(pad, revNum, callback)
 }
 
 exports.getPadHTML = getPadHTML;
+exports.getHTMLFromAtext = getHTMLFromAtext;
 
-function getHTMLFromAtext(pad, atext)
+function getHTMLFromAtext(pad, atext, authorColors)
 {
   var apool = pad.apool();
   var textLines = atext.text.slice(0, -1).split('\n');
@@ -101,6 +80,42 @@ function getHTMLFromAtext(pad, atext)
   var tags = ['h1', 'h2', 'strong', 'em', 'u', 's'];
   var props = ['heading1', 'heading2', 'bold', 'italic', 'underline', 'strikethrough'];
   var anumMap = {};
+  var css = "";
+
+  var stripDotFromAuthorID = function(id){
+    return id.replace(/\./g,'_');
+  };
+
+  if(authorColors){
+    css+="<style>\n";
+    
+    for (var a in apool.numToAttrib) {
+      var attr = apool.numToAttrib[a];
+      
+      //skip non author attributes
+      if(attr[0] === "author" && attr[1] !== ""){
+        //add to props array
+        var propName = "author" + stripDotFromAuthorID(attr[1]);
+        var newLength = props.push(propName);
+        anumMap[a] = newLength -1;
+        
+        css+="." + propName + " {background-color: " + authorColors[attr[1]]+ "}\n";
+      } else if(attr[0] === "removed") {
+        var propName = "removed";
+        
+        var newLength = props.push(propName);
+        anumMap[a] = newLength -1;
+        
+        css+=".removed {text-decoration: line-through; " + 
+             "-ms-filter:'progid:DXImageTransform.Microsoft.Alpha(Opacity=80)'; "+ 
+             "filter: alpha(opacity=80); "+
+             "opacity: 0.8; "+
+             "}\n";
+      }
+    }
+    
+    css+="</style>";
+  }
 
   props.forEach(function (propName, i)
   {
@@ -125,22 +140,53 @@ function getHTMLFromAtext(pad, atext)
     // <b>Just bold <i>Bold and italics</i></b> <i>Just italics</i>
     var taker = Changeset.stringIterator(text);
     var assem = Changeset.stringAssembler();
-
     var openTags = [];
+
+    function getSpanClassFor(i){
+      //return if author colors are disabled
+      if (!authorColors) return false;
+      
+      var property = props[i];
+   
+      if(property.substr(0,6) === "author"){
+        return stripDotFromAuthorID(property);
+      }
+      
+      if(property === "removed"){
+        return "removed";
+      }
+      
+      return false;
+    }
+
     function emitOpenTag(i)
     {
       openTags.unshift(i);
-      assem.append('<');
-      assem.append(tags[i]);
-      assem.append('>');
+      var spanClass = getSpanClassFor(i);
+      
+      if(spanClass){
+        assem.append('<span class="');
+        assem.append(spanClass);
+        assem.append('">');
+      } else {
+        assem.append('<');
+        assem.append(tags[i]);
+        assem.append('>');
+      }
     }
 
     function emitCloseTag(i)
     {
       openTags.shift();
-      assem.append('</');
-      assem.append(tags[i]);
-      assem.append('>');
+      var spanClass = getSpanClassFor(i);
+      
+      if(spanClass){
+        assem.append('</span>');
+      } else {
+        assem.append('</');
+        assem.append(tags[i]);
+        assem.append('>');
+      }
     }
     
     function orderdCloseTags(tags2close)
@@ -303,7 +349,7 @@ function getHTMLFromAtext(pad, atext)
 
     return _processSpaces(assem.toString());
   } // end getLineHTML
-  var pieces = [];
+  var pieces = [css];
 
   // Need to deal with constraints imposed on HTML lists; can
   // only gain one level of nesting at once, can't change type
@@ -401,8 +447,22 @@ function getHTMLFromAtext(pad, atext)
           pieces.push('</li></ul>');
         }
         lists.length--;
-      }      
-      pieces.push(lineContent, '<br>');
+      }   
+      var lineContentFromHook = hooks.callAllStr("getLineHTMLForExport", 
+      {
+        line: line,
+        apool: apool,
+        attribLine: attribLines[i],
+        text: textLines[i]
+      }, " ", " ", "");
+	  if (lineContentFromHook)
+	  {
+	    pieces.push(lineContentFromHook, '');
+	  } 
+	  else 
+	 {
+	   pieces.push(lineContent, '<br>');
+	 }		  
     }
   }
   
@@ -421,45 +481,6 @@ function getHTMLFromAtext(pad, atext)
   return pieces.join('');
 }
 
-function _analyzeLine(text, aline, apool)
-{
-  var line = {};
-
-  // identify list
-  var lineMarker = 0;
-  line.listLevel = 0;
-  if (aline)
-  {
-    var opIter = Changeset.opIterator(aline);
-    if (opIter.hasNext())
-    {
-      var listType = Changeset.opAttributeValue(opIter.next(), 'list', apool);
-      if (listType)
-      {
-        lineMarker = 1;
-        listType = /([a-z]+)([12345678])/.exec(listType);
-        if (listType)
-        {
-          line.listTypeName = listType[1];
-          line.listLevel = Number(listType[2]);
-        }
-      }
-    }
-  }
-  if (lineMarker)
-  {
-    line.text = text.substring(1);
-    line.aline = Changeset.subattribution(aline, 1);
-  }
-  else
-  {
-    line.text = text;
-    line.aline = aline;
-  }
-
-  return line;
-}
-
 exports.getPadHTMLDocument = function (padId, revNum, noDocType, callback)
 {
   padManager.getPad(padId, function (err, pad)
@@ -469,6 +490,7 @@ exports.getPadHTMLDocument = function (padId, revNum, noDocType, callback)
     var head = 
       (noDocType ? '' : '<!doctype html>\n') + 
       '<html lang="en">\n' + (noDocType ? '' : '<head>\n' + 
+	'<title>' + Security.escapeHTML(padId) + '</title>\n' +
         '<meta charset="utf-8">\n' + 
         '<style> * { font-family: arial, sans-serif;\n' + 
           'font-size: 13px;\n' + 
@@ -493,79 +515,6 @@ exports.getPadHTMLDocument = function (padId, revNum, noDocType, callback)
       callback(null, head + html + foot);
     });
   });
-}
-
-function _encodeWhitespace(s) {
-  return s.replace(/[^\x21-\x7E\s\t\n\r]/g, function(c)
-  {
-    return "&#" +c.charCodeAt(0) + ";"
-  });
-}
-
-// copied from ACE
-
-
-function _processSpaces(s)
-{
-  var doesWrap = true;
-  if (s.indexOf("<") < 0 && !doesWrap)
-  {
-    // short-cut
-    return s.replace(/ /g, '&nbsp;');
-  }
-  var parts = [];
-  s.replace(/<[^>]*>?| |[^ <]+/g, function (m)
-  {
-    parts.push(m);
-  });
-  if (doesWrap)
-  {
-    var endOfLine = true;
-    var beforeSpace = false;
-    // last space in a run is normal, others are nbsp,
-    // end of line is nbsp
-    for (var i = parts.length - 1; i >= 0; i--)
-    {
-      var p = parts[i];
-      if (p == " ")
-      {
-        if (endOfLine || beforeSpace) parts[i] = '&nbsp;';
-        endOfLine = false;
-        beforeSpace = true;
-      }
-      else if (p.charAt(0) != "<")
-      {
-        endOfLine = false;
-        beforeSpace = false;
-      }
-    }
-    // beginning of line is nbsp
-    for (var i = 0; i < parts.length; i++)
-    {
-      var p = parts[i];
-      if (p == " ")
-      {
-        parts[i] = '&nbsp;';
-        break;
-      }
-      else if (p.charAt(0) != "<")
-      {
-        break;
-      }
-    }
-  }
-  else
-  {
-    for (var i = 0; i < parts.length; i++)
-    {
-      var p = parts[i];
-      if (p == " ")
-      {
-        parts[i] = '&nbsp;';
-      }
-    }
-  }
-  return parts.join('');
 }
 
 
@@ -593,3 +542,57 @@ function _findURLs(text)
 
   return urls;
 }
+
+
+// copied from ACE
+function _processSpaces(s){
+  var doesWrap = true;
+  if (s.indexOf("<") < 0 && !doesWrap){
+    // short-cut
+    return s.replace(/ /g, '&nbsp;');
+  }
+  var parts = [];
+  s.replace(/<[^>]*>?| |[^ <]+/g, function (m){
+    parts.push(m);
+  });
+  if (doesWrap){
+    var endOfLine = true;
+    var beforeSpace = false;
+    // last space in a run is normal, others are nbsp,
+    // end of line is nbsp
+    for (var i = parts.length - 1; i >= 0; i--){
+      var p = parts[i];
+      if (p == " "){
+        if (endOfLine || beforeSpace) parts[i] = '&nbsp;';
+        endOfLine = false;
+        beforeSpace = true;
+      }
+      else if (p.charAt(0) != "<"){
+        endOfLine = false;
+        beforeSpace = false;
+      }
+    }
+    // beginning of line is nbsp
+    for (var i = 0; i < parts.length; i++){
+      var p = parts[i];
+      if (p == " "){
+        parts[i] = '&nbsp;';
+        break;
+      }
+      else if (p.charAt(0) != "<"){
+        break;
+      }
+    }
+  }
+  else
+  {
+    for (var i = 0; i < parts.length; i++){
+      var p = parts[i];
+      if (p == " "){
+        parts[i] = '&nbsp;';
+      }
+    }
+  }
+  return parts.join('');
+}
+

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-NODE_VERSION="0.6.5"
+NODE_VERSION="0.8.4"
 
 #Move to the folder where ep-lite is installed
 cd `dirname $0`
@@ -50,7 +50,14 @@ mv node_modules_resolved node_modules
 
 echo "download windows node..."
 cd bin
-wget "http://nodejs.org/dist/v$NODE_VERSION/node.exe" -O node.exe
+wget "http://nodejs.org/dist/v$NODE_VERSION/node.exe" -O ../node.exe
+
+echo "remove git history to reduce folder size"
+rm -rf .git/objects
+
+echo "remove windows jsdom-nocontextify/test folder"
+rm -rf /tmp/etherpad-lite-win/node_modules/ep_etherpad-lite/node_modules/jsdom-nocontextifiy/test/
+rm -rf /tmp/etherpad-lite-win/src/node_modules/jsdom-nocontextifiy/test/
 
 echo "create the zip..."
 cd /tmp
