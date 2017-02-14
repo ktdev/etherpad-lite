@@ -4,9 +4,7 @@
  * This is not used for authors that are created via the API at current
  */
 
-var Store = require('ep_etherpad-lite/node_modules/connect/lib/middleware/session/store'),
-  utils = require('ep_etherpad-lite/node_modules/connect/lib/utils'),
-  Session = require('ep_etherpad-lite/node_modules/connect/lib/middleware/session/session'),
+var Store = require('ep_etherpad-lite/node_modules/express-session').Store,
   db = require('ep_etherpad-lite/node/db/DB').db,
   log4js = require('ep_etherpad-lite/node_modules/log4js'),
   messageLogger = log4js.getLogger("SessionStore");
@@ -22,7 +20,7 @@ SessionStore.prototype.get = function(sid, fn){
   {
     if (sess) {
       sess.cookie.expires = 'string' == typeof sess.cookie.expires ? new Date(sess.cookie.expires) : sess.cookie.expires;
-      if (!sess.cookie.expires || new Date() < expires) {
+      if (!sess.cookie.expires || new Date() < sess.cookie.expires) {
         fn(null, sess);
       } else {
         self.destroy(sid, fn);

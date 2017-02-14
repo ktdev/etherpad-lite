@@ -34,13 +34,13 @@ var sql = "SET CHARACTER SET UTF8;\n" +
 fs.writeSync(sqlOutput, sql);
 log("done");
 
-//set setings for ep db
-var etherpadDB= new mysql.Client();
-etherpadDB.host = settings.etherpadDB.host; 
-etherpadDB.port = settings.etherpadDB.port;
-etherpadDB.database = settings.etherpadDB.database; 
-etherpadDB.user = settings.etherpadDB.user; 
-etherpadDB.password = settings.etherpadDB.password; 
+var etherpadDB = mysql.createConnection({
+  host     : settings.etherpadDB.host,
+  user     : settings.etherpadDB.user,
+  password : settings.etherpadDB.password,
+  database : settings.etherpadDB.database,
+  port     : settings.etherpadDB.port
+});
 
 //get the timestamp once
 var timestamp = new Date().getTime();
@@ -337,7 +337,7 @@ function convertPad(padId, callback)
         var oldName2newName = {};
         
         //replace the authors with generated authors
-        // we need to do that cause etherpad saves pad local authors, etherpad lite uses them global
+        // we need to do that cause where the original etherpad saves pad local authors, the new (lite) etherpad uses them global
         for(var i in apool.numToAttrib)
         {
           var key = apool.numToAttrib[i][0];

@@ -21,8 +21,6 @@
 	$.gritter.options = {
 		position: '',
 		class_name: '', // could be set to 'gritter-light' to use white notifications
-		fade_in_speed: 'medium', // how fast notifications fade in
-		fade_out_speed: 1000, // how fast the notices fade out
 		time: 6000 // hang on the screen for...
 	}
 	
@@ -80,7 +78,7 @@
 		_tpl_close: '<div class="gritter-close"></div>',
 		_tpl_title: '<span class="gritter-title">[[title]]</span>',
 		_tpl_item: '<div id="gritter-item-[[number]]" class="gritter-item-wrapper [[item_class]]" style="display:none"><div class="gritter-top"></div><div class="gritter-item">[[close]][[image]]<div class="[[class_name]]">[[title]]<p>[[text]]</p></div><div style="clear:both"></div></div><div class="gritter-bottom"></div></div>',
-		_tpl_wrap: '<div id="gritter-notice-wrapper"></div>',
+		_tpl_wrap: '<div id="gritter-notice-wrapper" aria-live="polite" aria-atomic="false" aria-relevant="additions" role="log"></div>',
 		
 		/**
 		* Add a gritter notification to the screen

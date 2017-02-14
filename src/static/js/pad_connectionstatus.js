@@ -21,7 +21,6 @@
  */
 
 var padmodals = require('./pad_modals').padmodals;
-var padeditbar = require('./pad_editbar').padeditbar;
 
 var padconnectionstatus = (function()
 {
@@ -65,18 +64,17 @@ var padconnectionstatus = (function()
         why: msg
       };
       
-      var k = String(msg).toLowerCase(); // known reason why
-      if (!(k == 'userdup' || k == 'deleted' || k == 'looping' || k == 'slowcommit' || k == 'initsocketfail' || k == 'unauth'))
+      var k = String(msg); // known reason why
+      if (!(k == 'userdup' || k == 'deleted' || k == 'looping' || k == 'slowcommit' || k == 'initsocketfail' || k == 'unauth' || k == 'badChangeset' || k == 'corruptPad'))
       {
         k = 'disconnected';
       }
-      
+
       padmodals.showModal(k);
       padmodals.showOverlay();
     },
     isFullyConnected: function()
     {
-      padmodals.hideOverlay();
       return status.what == 'connected';
     },
     getStatus: function()

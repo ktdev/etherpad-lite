@@ -68,7 +68,7 @@ PadDiff.prototype._isClearAuthorship = function(changeset){
     return false;
     
   return true;
-}
+};
  
 PadDiff.prototype._createClearAuthorship = function(rev, callback){
   var self = this;
@@ -84,7 +84,7 @@ PadDiff.prototype._createClearAuthorship = function(rev, callback){
    
    callback(null, changeset);
   });
-}
+};
  
 PadDiff.prototype._createClearStartAtext = function(rev, callback){
   var self = this;
@@ -101,13 +101,17 @@ PadDiff.prototype._createClearStartAtext = function(rev, callback){
        return callback(err);
      }
    
+     try {
      //apply the clearAuthorship changeset
      var newAText = Changeset.applyToAText(changeset, atext, self._pad.pool);
+     } catch(err) {
+      return callback(err)
+     }
      
      callback(null, newAText);
    });
   });
-}
+};
  
 PadDiff.prototype._getChangesetsInBulk = function(startRev, count, callback) {
   var self = this;
@@ -124,7 +128,7 @@ PadDiff.prototype._getChangesetsInBulk = function(startRev, count, callback) {
   async.forEach(revisions, function(rev, callback){
     self._pad.getRevision(rev, function(err, revision){
       if(err){
-        return callback(err)
+        return callback(err);
       }
       
       var arrayNum = rev-startRev;
@@ -137,7 +141,7 @@ PadDiff.prototype._getChangesetsInBulk = function(startRev, count, callback) {
   }, function(err){
     callback(err, changesets, authors);
   });
-}
+};
  
 PadDiff.prototype._addAuthors = function(authors) {
   var self = this;
@@ -147,7 +151,7 @@ PadDiff.prototype._addAuthors = function(authors) {
       self._authors.push(author);
     }
   });
-}
+};
  
 PadDiff.prototype._createDiffAtext = function(callback) {
   var self = this;
@@ -209,17 +213,21 @@ PadDiff.prototype._createDiffAtext = function(callback) {
         if(superChangeset){
           var deletionChangeset = self._createDeletionChangeset(superChangeset,atext,self._pad.pool);
         
-          //apply the superChangeset, which includes all addings
-          atext = Changeset.applyToAText(superChangeset,atext,self._pad.pool);
-          //apply the deletionChangeset, which adds a deletions
-          atext = Changeset.applyToAText(deletionChangeset,atext,self._pad.pool);
+          try {
+            //apply the superChangeset, which includes all addings
+            atext = Changeset.applyToAText(superChangeset,atext,self._pad.pool);
+            //apply the deletionChangeset, which adds a deletions
+            atext = Changeset.applyToAText(deletionChangeset,atext,self._pad.pool);
+          } catch(err) {
+           return callback(err)
+          }
         }      
  
         callback(err, atext);
       }
     );
   });
-}
+};
  
 PadDiff.prototype.getHtml = function(callback){
   //cache the html
@@ -279,7 +287,7 @@ PadDiff.prototype.getAuthors = function(callback){
   } else {
     callback(null, self._authors);
   }
-}
+};
  
 PadDiff.prototype._extendChangesetWithAuthor = function(changeset, author, apool) {  
   //unpack
@@ -312,7 +320,7 @@ PadDiff.prototype._extendChangesetWithAuthor = function(changeset, author, apool
   
   //return the modified changeset
   return Changeset.pack(unpacked.oldLen, unpacked.newLen, assem.toString(), unpacked.charBank);
-}
+};
  
 //this method is 80% like Changeset.inverse. I just changed so instead of reverting, it adds deletions and attribute changes to to the atext.
 PadDiff.prototype._createDeletionChangeset = function(cs, startAText, apool) {
@@ -331,27 +339,11 @@ PadDiff.prototype._createDeletionChangeset = function(cs, startAText, apool) {
     }
   }
  
-  function lines_length() {
-    if ((typeof lines.length) == "number") {
-      return lines.length;
-    } else {
-      return lines.length();
-    }
-  }
- 
   function alines_get(idx) {
     if (alines.get) {
       return alines.get(idx);
     } else {
       return alines[idx];
-    }
-  }
- 
-  function alines_length() {
-    if ((typeof alines.length) == "number") {
-      return alines.length;
-    } else {
-      return alines.length();
     }
   }
  
@@ -463,7 +455,7 @@ PadDiff.prototype._createDeletionChangeset = function(cs, startAText, apool) {
       // If the text this operator applies to is only a star, than this is a false positive and should be ignored
       if (csOp.attribs && textBank != "*") {
         var deletedAttrib = apool.putAttrib(["removed", true]);
-        var authorAttrib = apool.putAttrib(["author", ""]);;
+        var authorAttrib = apool.putAttrib(["author", ""]);
  
         attribKeys.length = 0;
         attribValues.length = 0;
@@ -473,7 +465,7 @@ PadDiff.prototype._createDeletionChangeset = function(cs, startAText, apool) {
  
           if(apool.getAttribKey(n) === "author"){
             authorAttrib = n;
-          };
+          }
         });
  
         var undoBackToAttribs = cachedStrFunc(function (attribs) {
